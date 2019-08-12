@@ -1,0 +1,25 @@
+{
+  "environment": "web",
+  "format": "html",
+  "prefix": "https://storage.googleapis.com",
+  "mainga": "UA-49880327-14",
+  "updated": "2019-08-12T10:45:11-05:00",
+  "id": "node-terraform",
+  "duration": 66,
+  "title": "Deploy NodeJs App on AWS Using Terraform and Docker",
+  "summary": "NodeJs App deployed to AWS using Terraform and DOcker",
+  "source": "codelab.md",
+  "theme": "",
+  "status": [
+    "draft"
+  ],
+  "category": [
+    "web"
+  ],
+  "tags": [
+    "web"
+  ],
+  "feedback": "github.com/dmattia",
+  "ga": "0",
+  "url": "node-terraform"
+}

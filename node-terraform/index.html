@@ -1,0 +1,447 @@
+
+<!doctype html>
+
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, minimum-scale=1.0, initial-scale=1.0, user-scalable=yes">
+  <meta name="theme-color" content="#4F7DC9">
+  <meta charset="UTF-8">
+  <title>Deploy NodeJs App on AWS Using Terraform and Docker</title>
+  <link rel="stylesheet" href="//fonts.googleapis.com/css?family=Source+Code+Pro:400|Roboto:400,300,400italic,500,700|Roboto+Mono">
+  <link rel="stylesheet" href="//fonts.googleapis.com/icon?family=Material+Icons">
+  <link rel="stylesheet" href="https://storage.googleapis.com/codelab-elements/codelab-elements.css">
+  <style>
+    .success {
+      color: #1e8e3e;
+    }
+    .error {
+      color: red;
+    }
+  </style>
+</head>
+<body>
+  <google-codelab-analytics gaid="UA-49880327-14"></google-codelab-analytics>
+  <google-codelab codelab-gaid="0"
+                  id="node-terraform"
+                  title="Deploy NodeJs App on AWS Using Terraform and Docker"
+                  environment="web"
+                  feedback-link="github.com/dmattia">
+    
+      <google-codelab-step label="Overview of the tutorial" duration="3">
+        <p>This tutorial shows you how to deploy a web app on AWS in a reliable way (similar to the way we do it at Transcend.io). We use the following stack, which will be doven into deeper in future sections:</p>
+<ul>
+<li><strong>NodeJs</strong>: For making the web app</li>
+</ul>
+<pre><code>brew install node
+</code></pre>
+<ul>
+<li><strong>Terraform</strong>: Infrastructure as Code tool for deploying to AWS</li>
+</ul>
+<pre><code>brew install terraform
+</code></pre>
+<ul>
+<li><strong>Docker</strong>: For bundling the dependencies of the web app into a Container</li>
+</ul>
+<pre><code>brew install docker
+</code></pre>
+<ul>
+<li><strong>Amazon Web Services</strong>: For hosting the web app</li>
+</ul>
+<pre><code>brew install awscli
+</code></pre>
+<aside class="special"><p>It may be helpful to familiarize yourself with these services using our internal Notion docs</p>
+</aside>
+<p>This tutorial assumes basic familiarity with web applications and hosting</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Create a basic NodeJS app" duration="5">
+        <h2 is-upgraded>In this section</h2>
+<p>We will create a basic web app that can run on localhost.</p>
+<h2 is-upgraded>Tutorial</h2>
+<ul>
+<li>In a new directory, initialize a <code>package.json</code> file to track dependencies</li>
+</ul>
+<pre><code>npm init
+</code></pre>
+<ul>
+<li>For this app, we will use <code>Express</code> as our web server</li>
+</ul>
+<pre><code>npm install --save express
+</code></pre>
+<ul>
+<li>Create a file named <code>app.js</code> for the web server with the following contents:</li>
+</ul>
+<pre><code>const app = require(&#39;express&#39;)();
+
+app.get(&#39;/&#39;, (req, res) =&gt; {
+  res.send(&#39;Hello, World!\n&#39;);
+});
+
+app.listen(3000, &#39;0.0.0.0&#39;)
+</code></pre>
+<p>This file, as you might expect, starts a web server on localhost (If unfamiliar, that is what <code>0.0.0.0</code> refers to) on port <code>3000</code>.</p>
+<ul>
+<li>Verify that your server works. On the command line, run:</li>
+</ul>
+<pre><code>node app.js
+</code></pre>
+<p><a href="http://localhost:3000/" target="_blank">Click here to view the app in your browser</a></p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Make a Docker Image" duration="10">
+        <p>In the last step, we used a <code>package.json</code> file to explicitly remember our dependencies. This is a common approach for ensuring that other team members or cloud environments can easily use the same libraries as we do.</p>
+<p>However, it is not always enough. The previous step lacked:</p>
+<ul>
+<li><strong>Complete Dependencies</strong>: While a <code>package.json</code> lists javascript dependencies, it does not list all dependencies, such as <code>Node</code> itself or even that it must run on some operating system.</li>
+<li><strong>Container Isolation</strong>: By creating a container, you can explicitly decide how that container can communicate with other processes, helping with security.</li>
+<li><strong>Full Instructions for running the app</strong>: A <code>package.json</code> may have helpful scripts such as <code>npm run</code> for running the app, there is no set of commands that will properly build all apps.</li>
+</ul>
+<p>With Docker, you can:</p>
+<ul>
+<li>Fully list all dependencies (excluding a linux kernal, which is assumed)</li>
+<li>Isolate your web app by default</li>
+<li>Give simple instructions for how to run the app</li>
+</ul>
+<h2 is-upgraded>Blueprints of our image</h2>
+<p>Create a file named <code>Dockerfile</code>. In it, paste the following code:</p>
+<pre><code>FROM node:10
+WORKDIR /usr/src/app
+COPY package*.json ./
+RUN npm i
+COPY . .
+EXPOSE 3000
+CMD [ &#34;node&#34;, &#34;app.js&#34; ]
+</code></pre>
+<p>Let&#39;s examine this code line by line:</p>
+<pre><code>FROM node:10
+</code></pre>
+<p>This says that your app will depend on <code>Node</code> version 10.</p>
+<pre><code>WORKDIR /usr/src/app
+</code></pre>
+<p>This says that for any other commands in your docker file, you will be in the <code>/usr/src/app</code> directory of the virtual file system.</p>
+<pre><code>COPY package*.json ./
+</code></pre>
+<p>This tells the image to copy over your <code>package.json</code> and <code>package-lock.json</code> files. The <code>COPY</code> command takes its first argument from your current directory (outside of docker) and its second argument relative to your <code>WORKDIR</code> inside docker.</p>
+<pre><code>RUN npm i
+</code></pre>
+<p>This installs the dependencies you listed in the <code>package.json</code> file.</p>
+<pre><code>COPY . .
+</code></pre>
+<p>This copies over all the other files from your current workspace, minus those in your <code>.dockerignore</code> file. We do not want to copy over our <code>node_modules</code> because we already ran <code>npm i</code> last step. So we can create a new file named <code>.dockerignore</code> with the contents:</p>
+<pre><code>node_modules
+npm-debug.log
+</code></pre>
+<p>This also saves a bit of time as <code>node_modules</code> can be quite large and slow to copy.</p>
+<pre><code>EXPOSE 3000
+</code></pre>
+<p>By default, docker will not give any external process access to inside the container. We want to allow one port to be exposed so that outsiders can access the webapp. This exposes port <code>3000</code>, which happens to be the port we hosted our <code>Node</code> app on locally earlier.</p>
+<pre><code>CMD [ &#34;node&#34;, &#34;app.js&#34; ]
+</code></pre>
+<p>The last step is to tell the container to run the <code>app.js</code> file we copied over using the <code>node</code> binary, which hosts the app.</p>
+<h2 is-upgraded>Running our image locally</h2>
+<p>Let&#39;s build an image!</p>
+<pre><code>docker build -t some-image-name .
+</code></pre>
+<p>This will build an image to your local machine named <code>some-image-name</code>.</p>
+<p>In the output, you may notice that it also tags your image as <code>some-image-name:latest</code>. Tags are a way to version and, well, tag, your images in case you ever want multiple images related to the same app/job.</p>
+<p>Now, lets run it on localhost:</p>
+<pre><code>docker run -p 12345:3000 -d some-image-name 
+</code></pre>
+<p>This command says to run the <code>some-image-name</code> image locally. The <code>-p 12345:3000</code> flag is an example of port forwarding. Your local machine and the docker container have their own, distinct sets of ports. Port forwarding enables you to say &#34;Whenever someone asks for my 12345 port, send them to some docker container&#39;s 3000 port instead.&#34; This is kind of like a proxy server, if that helps you.</p>
+<p><a href="http://localhost:12345/" target="_blank">Click here to view the app in your browser</a></p>
+<h2 is-upgraded>Kill the Docker process</h2>
+<p>Let&#39;s cleanup, as we no longer want to run this web app locally.</p>
+<p>Running</p>
+<pre><code>docker ps
+</code></pre>
+<p>will give you an overview of the currently running docker images. Copy the name of the image you just started, and run</p>
+<pre><code>docker kill &lt;process_name&gt;
+</code></pre>
+<p>to stop it. You may want to run <code>docker ps</code> one last time to verify it has stopped.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Terraform. Wow. What is that?" duration="3">
+        <p>Terraform lets you declare infrastructure as code. This is a pretty popular paradigm predicated on the idea that code is easier to version, share, and change than infrastructure made through web consoles. Here are a few more specific benefits of Terraform:</p>
+<ul>
+<li>You can put your infrastructure under version control.</li>
+<li>Ease of automation. If your infra is defined in code, it is easy to automate deploys.</li>
+<li>Speed of automation. Terraform deploys changes very quickly, compared to a human manually navigating a cloud service provider&#39;s website.</li>
+<li>Running <code>terraform plan</code> shows you what infra will change before you make any changes so you can easily see exactly how it will change.</li>
+<li>Running <code>terraform graph</code> gives you a visual representation of how your infra exists.</li>
+<li>Immutable Infrastructure: By deploying new servers with most changes, terraform ensures your system works properly. There&#39;s far less likelihood that someone ssh&#39;d in to your EC2 instance at some point and ran commands to fix the system that were never documented. With terraform, changes are forced to be reproducible.</li>
+<li>Declarative code: Say your terraform code says to make an EC2 server. If you run <code>terraform apply</code> 10 times, you&#39;ll still only have one server, not 10. It automatically cleans up old, no longer necessary resources to save some money and confusion.</li>
+<li>Masterless: Terraform does not require you to run any sort of server that your infra must depend on. You do need to keep track of state, but we&#39;ll get to that later.</li>
+<li>It&#39;s open sourced! Unlike AWS CloudFormation, you <a href="https://github.com/hashicorp/terraform" target="_blank">can easily find the source code for the terraform CLI online</a>.</li>
+</ul>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Host your image on AWS ECR" duration="15">
+        <p>ECR is the Amazon Elastic Container Registry. If you have ever used Docker Hub, it is basically the same thing. At Transcend, we use ECR because it gives us cheap/free private repos, unlike Docker Hub (TODO: verify this. Right now this is just my best guess).</p>
+<p>It&#39;s entire job is to host Docker images in repos. You use it similarly to using S3, where you create a repo (instead of an S3 bucket) and then can upload images (instead of files) to that repo. Just like S3, it keeps track of versions and tags for you.</p>
+<aside class="special"><p>You should have already set up an AWS profile locally that you have permissions to deploy AWS resources with. You can also use a personal account (which I did), or just follow along without actually deploying anything if you won&#39;t be working on Terraform changes very often.</p>
+</aside>
+<p>Create a new folder named <code>deployment</code> to store your terraform code and <code>cd</code> into it.</p>
+<p>To start, create a file named <code>provider.tf</code>. In this, we will specify that we want to deploy to AWS specifically. Terraform supports many cloud providers. This looks like:</p>
+<pre><code>provider &#34;aws&#34; {
+  region  = &#34;eu-west-1&#34;
+  profile = &#34;test&#34;
+}
+</code></pre>
+<p>This says that all deploys will be in the <code>eu-west-1</code> region. It also says that I would like to use my <code>test</code> profile in the <code>awscli</code>, which I set up to be my personal account.</p>
+<p>Now, create a file named <code>ecr.tf</code> with the contents:</p>
+<pre><code>resource &#34;aws_ecr_repository&#34; &#34;ecr_repo&#34; {
+    name = &#34;ecr_example_repo&#34;
+}
+</code></pre>
+<p>This follows the syntax:</p>
+<pre><code>resource &#34;some aws resource&#34; &#34;some terraform name that lets you reference this resource from other resources in terraform&#34; {
+    name = &#34;the name that will appear in the AWS console for this resource&#34;
+    ...other args...
+}
+</code></pre>
+<p>To find a list of usable aws resource names and the arguments they take, <a href="https://www.terraform.io/docs/providers/aws/index.html" target="_blank">check out the docs</a>.</p>
+<h2 is-upgraded>Deploy to AWS</h2>
+<p>Run the command</p>
+<pre><code>terraform init
+</code></pre>
+<p>to initialize your directory as containing terraform code. This will download all plugins available from the aws provider you listed in <code>provider.tf</code></p>
+<p>Next, run</p>
+<pre><code>terraform plan
+</code></pre>
+<p>This step is optional, but highly recommended anytime you change infrastructure.</p>
+<p>You should see output that looks something like:</p>
+<pre><code>An execution plan has been generated and is shown below.
+Resource actions are indicated with the following symbols:
+  + create
+
+Terraform will perform the following actions:
+
+  # aws_ecr_repository.ecr_repo will be created
+  + resource &#34;aws_ecr_repository&#34; &#34;ecr_repo&#34; {
+      + arn                  = (known after apply)
+      + id                   = (known after apply)
+      + image_tag_mutability = &#34;MUTABLE&#34;
+      + name                 = &#34;ecr_example_repo&#34;
+      + registry_id          = (known after apply)
+      + repository_url       = (known after apply)
+    }
+
+Plan: 1 to add, 0 to change, 0 to destroy.
+</code></pre>
+<p>That looks good. It shows us that an <code>aws_ecr_repository</code> will be created. As this matches our expectation, we can run:</p>
+<pre><code>terraform apply
+</code></pre>
+<p>After confirming the plan, you can go to your ECR page on your AWS account and will see that an empty repository was made!</p>
+<aside class="warning"><p>If you don&#39;t see the repo, ensure that you are looking in the correct region.</p>
+</aside>
+<h2 is-upgraded>Pushing our Docker Image to ECR</h2>
+<p>We have a repo, now we need to push our local docker image to it. This is done in two steps, tagging our local image and pushing our changes.</p>
+<p>Find the repository url from your docker image, and copy it. Then, run:</p>
+<pre><code>docker tag some-example-image:latest &lt;repo_url&gt;:latest
+</code></pre>
+<p>This is kind of similar to a <code>git remote add origin &lt;repo_url&gt;</code> in git.</p>
+<p>Then, run:</p>
+<pre><code>docker push &lt;repo_url&gt;:latest
+</code></pre>
+<p>to upload the image to the remote repo. This is similar to a <code>git push</code> in git.</p>
+<p>Head back to your AWS console, and verify you can see the image you uploaded.</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="The Rest of the Owl" duration="30">
+        <p>The remaining step is to deploy the ECR image to AWS, which requires quite a few aws services, each with some terraform code to specify it.</p>
+<aside class="warning"><p>Terraform can be very verbose for simple examples, which you&#39;ll see in this section. With great control comes annoying levels of specification. This is as basic an example I could think of, with no logging, load balancer, etc.</p>
+</aside>
+<p>Let&#39;s start with the fun stuff, permissions and roles!</p>
+<h2 is-upgraded>IAM roles</h2>
+<p>Create a file named <code>iam.tf</code> with the contents:</p>
+<pre><code>resource &#34;aws_iam_role&#34; &#34;ecs_role&#34; {
+  name = &#34;ecs_role_example_app&#34;
+
+  assume_role_policy = &lt;&lt;POLICY
+{
+  &#34;Version&#34;: &#34;2012-10-17&#34;,
+  &#34;Statement&#34;: [
+    {
+      &#34;Sid&#34;: &#34;&#34;,
+      &#34;Effect&#34;: &#34;Allow&#34;,
+      &#34;Principal&#34;: {
+        &#34;Service&#34;: &#34;ecs-tasks.amazonaws.com&#34;
+      },
+      &#34;Action&#34;: &#34;sts:AssumeRole&#34;
+    }
+  ]
+}
+POLICY
+}
+
+resource &#34;aws_iam_role_policy_attachment&#34; &#34;ecs_policy_attachment&#34; {
+  role = &#34;${aws_iam_role.ecs_role.name}&#34;
+
+  // This policy adds logging + ecr permissions
+  policy_arn = &#34;arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy&#34;
+}
+</code></pre>
+<p>This creates a new IAM role named <code>ecs_role_example_app</code> with an attached <code>AmazonECSTaskExecutionRolePolicy</code>. This policy ensures that the role will be able to pull from ECR.</p>
+<h2 is-upgraded>A Custom Virtual Private Cloud</h2>
+<p>Next, create a file <code>network.tf</code> that contains:</p>
+<pre><code>resource &#34;aws_vpc&#34; &#34;vpc_example_app&#34; {
+    cidr_block = &#34;10.0.0.0/16&#34;
+    enable_dns_hostnames = true
+    enable_dns_support = true
+}
+
+resource &#34;aws_subnet&#34; &#34;public_a&#34; {
+    vpc_id = &#34;${aws_vpc.vpc_example_app.id}&#34;
+    cidr_block = &#34;10.0.1.0/24&#34;
+    availability_zone = &#34;${var.aws_region}a&#34;
+}
+
+resource &#34;aws_subnet&#34; &#34;public_b&#34; {
+    vpc_id = &#34;${aws_vpc.vpc_example_app.id}&#34;
+    cidr_block = &#34;10.0.2.0/24&#34;
+    availability_zone = &#34;${var.aws_region}b&#34;
+}
+
+resource &#34;aws_internet_gateway&#34; &#34;internet_gateway&#34; {
+    vpc_id = &#34;${aws_vpc.vpc_example_app.id}&#34;
+}
+
+resource &#34;aws_route&#34; &#34;internet_access&#34; {
+    route_table_id = &#34;${aws_vpc.vpc_example_app.main_route_table_id}&#34;
+    destination_cidr_block = &#34;0.0.0.0/0&#34;
+    gateway_id = &#34;${aws_internet_gateway.internet_gateway.id}&#34;
+}
+
+resource &#34;aws_security_group&#34; &#34;security_group_example_app&#34; {
+    name = &#34;security_group_example_app&#34;
+    description = &#34;Allow TLS inbound traffic on port 80 (http)&#34;
+    vpc_id = &#34;${aws_vpc.vpc_example_app.id}&#34;
+
+    ingress {
+        from_port = 80
+        to_port = 3000
+        protocol = &#34;tcp&#34;
+        cidr_blocks = [&#34;0.0.0.0/0&#34;]
+    }
+
+    egress {
+        from_port = 0
+        to_port = 0
+        protocol = &#34;-1&#34;
+        cidr_blocks = [&#34;0.0.0.0/0&#34;]
+    }
+}
+</code></pre>
+<p>This creates a VPC that other resources can go into. It has a public subnet (in two availability zones) that can connect to the internet via an internet gateway.</p>
+<p>For security reasons, we specify that only port 3000 should be exposed to the public, but outgoing traffic from our resources is unrestricted.</p>
+<p>If this is confusing (it was for me at first), then I would recommend <a href="https://www.youtube.com/watch?v=pAOrBxZ7584" target="_blank">this youtube playlist</a>.</p>
+<h2 is-upgraded>Fargate deployment</h2>
+<p>Fargate is the final, and most exciting step. It is a service that deploys Docker containers for us, which means we&#39;re finally at the step of having our simple NodeJs app running on AWS infrastructure!</p>
+<p>Create a file <code>fargate.tf</code> with the contents:</p>
+<pre><code>resource &#34;aws_ecs_task_definition&#34; &#34;backend_task&#34; {
+    family = &#34;${var.ecs_family}&#34;
+
+    // Fargate is a type of ECS that requires awsvpc network_mode
+    requires_compatibilities = [&#34;FARGATE&#34;]
+    network_mode = &#34;awsvpc&#34;
+
+    // Valid sizes are shown here: https://aws.amazon.com/fargate/pricing/
+    memory = &#34;512&#34;
+    cpu = &#34;256&#34;
+
+    // Fargate requires task definitions to have an execution role ARN to support ECR images
+    execution_role_arn = &#34;${aws_iam_role.ecs_role.arn}&#34;
+
+    container_definitions = &lt;&lt;EOT
+[
+    {
+        &#34;name&#34;: &#34;example_app_container&#34;,
+        &#34;image&#34;: &#34;&lt;your_ecr_repo_url&gt;:latest&#34;,
+        &#34;memory&#34;: 512,
+        &#34;essential&#34;: true,
+        &#34;portMappings&#34;: [
+            {
+                &#34;containerPort&#34;: 3000,
+                &#34;hostPort&#34;: 3000
+            }
+        ]
+    }
+]
+EOT
+}
+
+resource &#34;aws_ecs_cluster&#34; &#34;backend_cluster&#34; {
+    name = &#34;backend_cluster_example_app&#34;
+}
+
+resource &#34;aws_ecs_service&#34; &#34;backend_service&#34; {
+    name = &#34;backend_service&#34;
+
+    cluster = &#34;${aws_ecs_cluster.backend_cluster.id}&#34;
+    task_definition = &#34;${aws_ecs_task_definition.backend_task.arn}&#34;
+
+    launch_type = &#34;FARGATE&#34;
+    desired_count = 1
+
+    network_configuration {
+        subnets = [&#34;${aws_subnet.public_a.id}&#34;, &#34;${aws_subnet.public_b.id}&#34;]
+        security_groups = [&#34;${aws_security_group.security_group_example_app.id}&#34;]
+        assign_public_ip = true
+    }
+}
+</code></pre>
+<p>Please fill in where I specified <code>&lt;your_ecr_repo_url&gt;</code></p>
+<p>Fargate is a type of the Elastic Container Service, which has three concepts:</p>
+<ul>
+<li>Clusters: a logical grouping of tasks or services</li>
+<li>Services: where you group tasks and specify how many of each task you want running at a time</li>
+<li>Tasks: defines a specified docker image to use, along with what IAM roles are needed to use it</li>
+</ul>
+<p>It should be pretty easy to map those concepts to the three terraform resource blocks above.</p>
+<p>There are quite a few arguments I won&#39;t go over in detail here, but they mostly relate to:</p>
+<ul>
+<li>Connecting the service to the VPC we created in <code>network.tf</code></li>
+<li>Ensuring this is the cheapest possible Fargate instance you can run so you don&#39;t spend more than a few cents on your demo app.</li>
+<li>Connecting the task, service, and cluster to each other.</li>
+<li>Giving the web app a public IP Address so you can visit the website you just made.</li>
+</ul>
+<p>Find the public IP Address on the task page in your AWS console, and go to <code>http://&lt;your_public_ip&gt;:3000</code> to view your super scalable hello world application!</p>
+
+
+      </google-codelab-step>
+    
+      <google-codelab-step label="Sections coming sometime later" duration="0">
+        <ul>
+<li>Terraform variables</li>
+<li>Terraform outputs</li>
+<li>Logging</li>
+<li>Dev/Prod env modules</li>
+<li>AWS Tags</li>
+<li>Load balancing</li>
+<li>Moving Terraform state to the Cloud</li>
+<li>Using containers you didn&#39;t write, such as Datadog Agent</li>
+<li>SSL certs and Domain Names</li>
+</ul>
+
+
+      </google-codelab-step>
+    
+  </google-codelab>
+
+  <script src="https://storage.googleapis.com/codelab-elements/native-shim.js"></script>
+  <script src="https://storage.googleapis.com/codelab-elements/custom-elements.min.js"></script>
+  <script src="https://storage.googleapis.com/codelab-elements/prettify.js"></script>
+  <script src="https://storage.googleapis.com/codelab-elements/codelab-elements.js"></script>
+
+</body>
+</html>
